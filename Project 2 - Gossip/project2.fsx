@@ -6,17 +6,19 @@ open Akka.Actor
 open Akka.FSharp
 
 type SupervisorMsg = 
-    | Start of string
-    | Converged of string
+    | Start
+    | Converged
 
 type ActorMsg =
-    | Initalize of allActors: IActorRef[] * index: int
+    | Initalize of allActors: List<IActorRef> * topology: string
     | NeighborConverged of IActorRef
+    | Gossip
+    
 
 // function getNeighbor (allActors: IActorRef[], index: int, topology:string)
     //match topolgy and return neighbors IActorRef[] accordingly
   
-//get number of nodes, topology, algo from command line
+
 // Round off to proper cubes for 3D and imperfect 3D
 let timer = System.Diagnostics.Stopwatch()
 let roundOffNodes (numNode:int) =
@@ -26,7 +28,7 @@ let roundOffNodes (numNode:int) =
         sqrtVal <- sqrtVal + 1
     sqrtVal*sqrtVal
 
-// Input from Command Line
+//get number of nodes, topology, algo from command line
 let mutable nodes = fsi.CommandLineArgs.[1] |> int
 let topology = fsi.CommandLineArgs.[2]
 let algo = fsi.CommandLineArgs.[3]
@@ -36,23 +38,47 @@ if topology = "3D" || topology = "Imp3D" then
 //Make topology
 
 //Gossip Actors
+let GossipActor (mailbox: Actor<_>) =
     //variables neighbourList, numberGossipReceived, gossipReceived bool, int neighbourcount
-    //Initialize
-        //initialize neighbours list according to topology
-        //set numberGossipReceived to 0
-    //Gossip
-        //ifgossipReceived = false make true
-        //increment numberGossipReceived
-        //if numberGossipReceived=10
-            //send Converged to parent
-            //send Converged to Neighbours    
-    //NeighborConverged
-        //remove actor from list of neighbours as converged
-        //decrement neighborCount and check if 0
-        //send Converged to Parent
+    let mutable timesGossipHeard = 0
+    let mutable gossipHeardOnce = false
+    let mutable neighbourCount = 0;
+    let mutable neighbourList = [];
+    let rec loop () = actor {
+        let! message = mailbox.Receive()
+        match message with
+        | Initalize(allActors, topology) ->
+            //initialize neighbours list according to topology
+            sprintf("Change this") |>ignore
+        | Gossip ->
+            gossipHeardOnce <- true
+            timesGossipHeard <- timesGossipHeard + 1
+            //if timesGossipHeard = 10 then
+                
+            //ifgossipReceived = false make true
+            //increment numberGossipReceived
+            //if numberGossipReceived=10
+                //send Converged to parent
+                //send Converged to Neighbours   
+            
+            
+       
+             
+        //NeighborConverged
+            //remove actor from list of neighbours as converged
+            //decrement neighborCount and check if 0
+            //send Converged to Parent
+
+        |_->()
+     
+        //ifgossipReceived
+            //keep sending gossip to random nodes in neighbours list
+        
+        
+        return! loop()
+    }
+    loop()
     
-    //ifgossipReceived
-        //keep sending gossip to random nodes in neighbours list
 
 //PushSum Actors
     //variables neighbourList, pushSumRecieved bool, int neighbourcount, int sum, int weight, int oldRatio, int lessthandelta
@@ -84,21 +110,36 @@ if topology = "3D" || topology = "Imp3D" then
 //Supervisor
 let Supervisor (mailbox:Actor<_>) =
     let mutable converged = 0
-    //Start
-        //check topology
-        //create actor pool for numberOfNodes
-        //Initialize all actors (with their neighbors according to topology)
-        //Start Timer
-        //Send gossip to first node
-    //Converged
+    let rec loop () = actor {
+        let! message = mailbox.Receive()
+        match message with
+        | Start ->
+            //check topology
+            if algo = "Gossip" then
+                let allActors = 
+                    [1 .. nodes]
+                    |> List.map(fun id -> spawn mailbox.Context (sprintf "Actor_%d" id) GossipActor)
+                allActors |> List.iter (fun item -> 
+                    item <! Initalize(allActors, topology))
+                //Start Timer
+                timer.Start()
+                //Send gossip to first node
+                allActors.[(rand.Next()) % nodes] <! Gossip
+        //Converged
         //increment number of actors that converged
         //if equal to total nodes
         //stop timer and terminate
+        |_ -> ()
+        return! loop()
+    }
+    loop()
+    
 
 //Spawn supervisor and start
-//let boss = spawn system "boss" BossActor
-//boss <! Start("start")
-//system.WhenTerminated.Wait()
+let ActorSystem = System.create "bitcoin-miner-server" (Configuration.load())
+let supervisor = spawn ActorSystem "supervisor" Supervisor
+supervisor <! Start
+ActorSystem.WhenTerminated.Wait()
 
 
         
