@@ -26,7 +26,9 @@ let getNeighbors (actorName:string) (allActors:list<IActorRef>) (topology:string
     //change this according to topology
     //let numberOfNeighbours = 10
     let totalNodes = allActors.Length
-    let currentNode = (actorName.[actorName.Length - 1] |> int) - 1
+    printf "Total nodes is %O" totalNodes
+    let currentNode = (actorName.Split('_').[1] |> int) - 1
+    printf "Current actor is Actor_%O" (currentNode)
 
     let getThreeDNeighbors (n : int) =
         let gridLength = int <| Math.Cbrt(float totalNodes)
@@ -74,6 +76,7 @@ let getNeighbors (actorName:string) (allActors:list<IActorRef>) (topology:string
             randomNode <- Random().Next(0, totalNodes)
         neighborList <- neighborList @ [allActors.[randomNode]]
 
+    printfn "%O" neighborList
     neighborList
 
 // Round off to proper cubes for 3D and imperfect 3D
