@@ -13,11 +13,19 @@ type ActorMsg =
     | Initalize of allActors: List<IActorRef> * topology: string
     | NeighborConverged of IActorRef
     | Gossip
+    | PushSum of sum:int * weight:int
     
 
+//create gossip system
+let gossipSystem = System.create "gossip-system" (Configuration.load())
+
 // function getNeighbor (allActors: IActorRef[], index: int, topology:string)
+let getNeighbors (actorName:IActorRef) (allActors:list<IActorRef>)(topology:string) =
     //match topolgy and return neighbors IActorRef[] accordingly
-  
+    let neighborList = []
+    //change this according to topology
+    let numberOfNeighbours = 10
+    (neighborList, numberOfNeighbours)
 
 // Round off to proper cubes for 3D and imperfect 3D
 let timer = System.Diagnostics.Stopwatch()
@@ -42,38 +50,43 @@ let GossipActor (mailbox: Actor<_>) =
     //variables neighbourList, numberGossipReceived, gossipReceived bool, int neighbourcount
     let mutable timesGossipHeard = 0
     let mutable gossipHeardOnce = false
-    let mutable neighbourCount = 0;
-    let mutable neighbourList = [];
+    let mutable neighborCount = 0;
+    let mutable neighborList = [];
     let rec loop () = actor {
         let! message = mailbox.Receive()
         match message with
         | Initalize(allActors, topology) ->
             //initialize neighbours list according to topology
+            let tupleValues = getNeighbors mailbox.Self allActors topology
+            neighborList <- fst(tupleValues)
+            neighborCount <- snd(tupleValues)
             sprintf("Change this") |>ignore
         | Gossip ->
-            gossipHeardOnce <- true
-            timesGossipHeard <- timesGossipHeard + 1
-            //if timesGossipHeard = 10 then
-                
-            //ifgossipReceived = false make true
+            if gossipHeardOnce = false then
+                gossipHeardOnce <- true
+            //////SELECT RANDOM NEIGHBOR AND SEND GOSSIP
             //increment numberGossipReceived
-            //if numberGossipReceived=10
+            timesGossipHeard <- timesGossipHeard + 1
+            if timesGossipHeard = 10 then  
                 //send Converged to parent
-                //send Converged to Neighbours   
-            
-            
+                mailbox.Context.Parent <! Converged
+                //send Converged to Neighbours  
+                neighborList |> List.iter (fun item -> item <! NeighborConverged(mailbox.Self)     
+        | NeighborConverged(actorRef) ->
+                //remove actor from list of neighbours as converged
+            //decrement neighborCount and check if 0
+            neighborCount <- neighborCount - 1
+            if neighborCount = 0 then
+            //send Converged to Parent
+            mailbox.Context.Parent <! Converged
        
              
-        //NeighborConverged
-            //remove actor from list of neighbours as converged
-            //decrement neighborCount and check if 0
-            //send Converged to Parent
-
-        |_->()
-     
         //ifgossipReceived
+        if gossipHeardOnce then
+            //////or we could use simple while loop and add delay of one second
+            let randomNeighbor: IActorRef = neighborList.[rand.Next()%neighborCount]
             //keep sending gossip to random nodes in neighbours list
-        
+            gossipSystem.Scheduler.ScheduleTellOnce(TimeSpan.FromSeconds(1.0), randomNeighbor, Gossip, mailbox.Self)
         
         return! loop()
     }
@@ -81,29 +94,70 @@ let GossipActor (mailbox: Actor<_>) =
     
 
 //PushSum Actors
+let PushSum (mailbox: Actor<_>) =
     //variables neighbourList, pushSumRecieved bool, int neighbourcount, int sum, int weight, int oldRatio, int lessthandelta
-    //Initialize
-        //initialize neighbours list according to topology
-        //set lessthandelta = 0
-        //set sum = i
-        //set weight to 1
-    //PushSum
-        //pushSumRecieved = false make true
-        //sum += newSum and weight+= newWeight
-        //if |oldRatio - newRatio|<10**-10
-            //increment lessthandelta
-        //else
-            //lessthandelta=0
-        //if lessthandelta=3 then        
-            //send Converged to parent
-            //send Converged to Neighbours    
-    //NeighborConverged
-        //remove actor from list of neighbours as converged
-        //decrement neighborCount and check if 0
-        //send Converged to Parent
+    let mutable lessthandelta = 0
+    let mutable pushSumReceived = false
+    let mutable neighborCount = 0
+    let mutable neighborList = []
+    let delta = 10.0 ** -10.0
+    let mutable sum = 0
+    let mutable weight = 1
+    let mutable ratio = 0
+    let mutable diff: float = 0.0
+    let rec loop () = actor {
+        let! message = mailbox.Receive()
+        match message with
+        | Initalize(allActors, topology) ->
+            //INITIALIZE NEIGHBOR LIST ACCORDING TO TOPOLOGY
+            let tupleValues = getNeighbors mailbox.Self allActors topology
+            neighborList <- fst(tupleValues)
+            neighborCount <- snd(tupleValues)
+            sprintf("Change this") |>ignore
+            /////INITIALIZE SUM ACCORDING TO ACTOR NUMBER
+            ratio <- sum/weight
+        
+        //PushSum
+        |PushSum(newSum, newWeight) ->
+            //pushSumRecieved = false make true
+            if pushSumReceived = false then
+                pushSumReceived <- true
+            //sum += newSum and weight+= newWeight
+            sum <- sum + newSum
+            weight <- weight + newWeight
+            //if |oldRatio - newRatio|<10**-10
+            diff <- ratio - (sum/weight) |> float |> abs
+            /////SEND SUM AND WEIGHT TO RANDOM NEIGHBOR
+            //compute new ratio
+            ratio <- sum/weight
+            if diff > delta then    
+                lessthandelta <- 0
+            else
+                lessthandelta <- (lessthandelta +1)
+            
+            //if lessthandelta=3 then  
+            if lessthandelta = 3 then
+                //send Converged to parent
+                mailbox.Context.Parent <! Converged
+                //send Converged to Neighbours  
+                neighborList |> List.iter (fun item -> 
+                    item <! NeighborConverged(mailbox.Self)) 
+                    
+        //NeighborConverged
+        |NeighborConverged(actorRef) ->
+            //remove actor from list of neighbours as converged
+            //decrement neighborCount and check if 0
+            neighborCount <- neighborCount - 1
 
-    //ifPushSumReceived
-        //keep sending pushSum to random nodes in neighbours list (s/2,w/2)
+        //ifPushSumReceived            
+        if pushSumReceived then
+            //////or we could use simple while loop and add delay of one second
+            let randomNeighbor: IActorRef = neighborList.[rand.Next()%neighborCount]
+            //keep sending gossip to random nodes in neighbours list
+            gossipSystem.Scheduler.ScheduleTellOnce(TimeSpan.FromSeconds(1.0), randomNeighbor, PushSum(sum, weight), mailbox.Self)
+        return! loop()
+    }
+    loop()
 
 
 
@@ -125,21 +179,22 @@ let Supervisor (mailbox:Actor<_>) =
                 timer.Start()
                 //Send gossip to first node
                 allActors.[(rand.Next()) % nodes] <! Gossip
-        //Converged
-        //increment number of actors that converged
-        //if equal to total nodes
-        //stop timer and terminate
-        |_ -> ()
+        | Converged ->
+            converged <- converged + 1
+            if converged = nodes then
+                printfn "Time taken = %i\n" timer.ElapsedMilliseconds
+                mailbox.Context.Stop(mailbox.Self)
+                mailbox.Context.System.Terminate() |> ignore
+                
         return! loop()
     }
     loop()
     
 
 //Spawn supervisor and start
-let ActorSystem = System.create "bitcoin-miner-server" (Configuration.load())
-let supervisor = spawn ActorSystem "supervisor" Supervisor
+let supervisor = spawn gossipSystem "supervisor" Supervisor
 supervisor <! Start
-ActorSystem.WhenTerminated.Wait()
+gossipSystem.WhenTerminated.Wait()
 
 
         
