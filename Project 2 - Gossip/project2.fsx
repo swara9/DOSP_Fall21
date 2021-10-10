@@ -20,77 +20,29 @@ type ActorMsg =
 let gossipSystem = System.create "gossip-system" (Configuration.load())
 
 // function getNeighbor (allActors: IActorRef[], index: int, topology:string)
-let getNeighbors (actorName:string) (allActors:list<IActorRef>) (topology:string) =
+let getNeighbors (actorName:IActorRef) (allActors:list<IActorRef>)(topology:string) =
     //match topolgy and return neighbors IActorRef[] accordingly
-    let mutable neighborList = []
+    let neighborList = []
     //change this according to topology
-    //let numberOfNeighbours = 10
-    let totalNodes = allActors.Length
-    let currentNode = (actorName.[actorName.Length - 1] |> int) - 1
-
-    let getThreeDNeighbors (n : int) =
-        let gridLength = int <| Math.Cbrt(float totalNodes)
-        let planeNodeCount = int (gridLength * gridLength)
-        let currentPlane = (/) n planeNodeCount
-        let planePosition = (%) n planeNodeCount
-        let currentRow = (/) planePosition gridLength
-        let currentColumn = (%) planePosition gridLength
-
-        if currentPlane > 0 then
-            neighborList <- neighborList @ [allActors.[n - planeNodeCount]]
-        if currentPlane < gridLength - 1 then
-            neighborList <- neighborList @ [allActors.[n + planeNodeCount]]
-
-        if currentRow > 0 then
-            neighborList <- neighborList @ [allActors.[n - gridLength]]
-        if currentRow < gridLength - 1 then
-            neighborList <- neighborList @ [allActors.[n + gridLength]]
-
-        if currentColumn > 0 then
-            neighborList <- neighborList @ [allActors.[n - 1]]
-        if currentColumn < gridLength - 1 then
-            neighborList <- neighborList @ [allActors.[n + 1]]
-
-    match topology.ToLower() with
-    |"line" ->
-        if currentNode > 0 then
-            neighborList <- neighborList @ [allActors.[currentNode - 1]]
-        if currentNode < (totalNodes - 2) then
-            neighborList <- neighborList @ [allActors.[currentNode + 1]]
-
-    |"full" ->
-        neighborList <-
-            allActors
-            |> List.mapi (fun i el -> (i <> currentNode, el))
-            |> List.filter fst |> List.map snd
-
-    |"3d" ->
-        getThreeDNeighbors currentNode
-
-    |"Imp3D" ->
-        getThreeDNeighbors currentNode
-        let mutable randomNode = Random().Next(0, totalNodes)
-        while randomNode = currentNode do
-            randomNode <- Random().Next(0, totalNodes)
-        neighborList <- neighborList @ [allActors.[randomNode]]
-
-    neighborList
+    let numberOfNeighbours = 10
+    (neighborList, numberOfNeighbours)
 
 // Round off to proper cubes for 3D and imperfect 3D
 let timer = System.Diagnostics.Stopwatch()
 let roundOffNodes (numNode:int) =
-    let gridLength = int <| Math.Cbrt(float numNode)
-    (float gridLength ** 3.0) |> int
+    //CHANGE THIS FOR 3D
+    let mutable sqrtVal = numNode |> float |> sqrt |> int
+    if sqrtVal*sqrtVal <> numNode then
+        sqrtVal <- sqrtVal + 1
+    sqrtVal*sqrtVal
 
 //get number of nodes, topology, algo from command line
 let mutable nodes = fsi.CommandLineArgs.[1] |> int
 let topology = fsi.CommandLineArgs.[2]
 let algo = fsi.CommandLineArgs.[3]
-printfn "zz"
+let rand = Random(nodes)
 if topology = "3D" || topology = "Imp3D" then
     nodes <- roundOffNodes nodes
-printfn "%O" nodes
-let rand = Random(nodes)
 //Make topology
 
 //Gossip Actors
@@ -105,8 +57,9 @@ let GossipActor (mailbox: Actor<_>) =
         match message with
         | Initalize(allActors, topology) ->
             //initialize neighbours list according to topology
-            neighborList <- getNeighbors mailbox.Self.Path.Name allActors topology
-            neighborCount <- neighborList.Length
+            let tupleValues = getNeighbors mailbox.Self allActors topology
+            neighborList <- fst(tupleValues)
+            neighborCount <- snd(tupleValues)
             sprintf("Change this") |>ignore
         | Gossip ->
             if gossipHeardOnce = false then
@@ -117,16 +70,15 @@ let GossipActor (mailbox: Actor<_>) =
             if timesGossipHeard = 10 then  
                 //send Converged to parent
                 mailbox.Context.Parent <! Converged
-                //send Converged to Neighbours
-                neighborList |> List.iter (fun item -> item <! NeighborConverged(mailbox.Self))
-                
+                //send Converged to Neighbours  
+                neighborList |> List.iter (fun item -> item <! NeighborConverged(mailbox.Self)     
         | NeighborConverged(actorRef) ->
                 //remove actor from list of neighbours as converged
             //decrement neighborCount and check if 0
             neighborCount <- neighborCount - 1
             if neighborCount = 0 then
             //send Converged to Parent
-                mailbox.Context.Parent <! Converged
+            mailbox.Context.Parent <! Converged
        
              
         //ifgossipReceived
@@ -158,9 +110,9 @@ let PushSum (mailbox: Actor<_>) =
         match message with
         | Initalize(allActors, topology) ->
             //INITIALIZE NEIGHBOR LIST ACCORDING TO TOPOLOGY
-            neighborList <- getNeighbors mailbox.Self.Path.Name allActors topology
-            //neighborList <- fst(tupleValues)
-            neighborCount <- neighborList.Length
+            let tupleValues = getNeighbors mailbox.Self allActors topology
+            neighborList <- fst(tupleValues)
+            neighborCount <- snd(tupleValues)
             sprintf("Change this") |>ignore
             /////INITIALIZE SUM ACCORDING TO ACTOR NUMBER
             ratio <- sum/weight
@@ -181,7 +133,7 @@ let PushSum (mailbox: Actor<_>) =
             if diff > delta then    
                 lessthandelta <- 0
             else
-                lessthandelta <- (lessthandelta + 1)
+                lessthandelta <- (lessthandelta +1)
             
             //if lessthandelta=3 then  
             if lessthandelta = 3 then
@@ -241,7 +193,6 @@ let Supervisor (mailbox:Actor<_>) =
 
 //Spawn supervisor and start
 let supervisor = spawn gossipSystem "supervisor" Supervisor
-printfn "Spawning Supervisor"
 supervisor <! Start
 gossipSystem.WhenTerminated.Wait()
 
