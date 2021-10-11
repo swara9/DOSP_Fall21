@@ -4,6 +4,16 @@
 open System
 open Akka.Actor
 open Akka.FSharp
+// open Akka.configuration
+
+// let configuration = 
+//     ConfigurationFactory.ParseString(
+//         @"akka {            
+//             stdout-loglevel : DEBUG
+//             loglevel : ERROR
+//             log-dead-letters = 0
+//             log-dead-letters-during-shutdown = off
+//         }")
 
 type SupervisorMsg = 
     | Start
@@ -96,7 +106,7 @@ let topology = fsi.CommandLineArgs.[2]
 let algo = fsi.CommandLineArgs.[3]
 if topology = "3D" || topology = "Imp3D" then
     nodes <- roundOffNodes nodes
-    printfn "%O" nodes
+printfn "%O" nodes
 let rand = Random(nodes)
 //Make topology
 
@@ -109,15 +119,14 @@ let GossipActor (mailbox: Actor<_>) =
     let mutable neighborCount: int = 0
     let mutable neighborList = []
     let parent = mailbox.Context.Parent
-    let self = mailbox.Self
     let rec loop () = actor {
         let! message = mailbox.Receive()
         match message with
         | Initalize(allActors, topology) ->
             //initialize neighbours list according to topology
-            neighborList <- getNeighbors self.Path.Name allActors topology
+            neighborList <- getNeighbors mailbox.Self.Path.Name allActors topology
             neighborCount <- neighborList.Length
-        | Gossip ->            
+        | Gossip ->           
             if gossipHeardOnce = false then
                 gossipHeardOnce <- true
             // select random neighbor and sed gossip
@@ -127,11 +136,13 @@ let GossipActor (mailbox: Actor<_>) =
                 randomNeighbor <! Gossip
             //increment numberGossipReceived
             timesGossipHeard <- timesGossipHeard + 1
+            printfn "I heard Gossip %i times" timesGossipHeard 
+
             if timesGossipHeard = 10 then  
                 //send Converged to parent
                 parent <! Converged
                 //send Converged to Neighbours
-                neighborList |> List.iter (fun item -> item <! NeighborConverged(self))
+                neighborList |> List.iter (fun item -> item <! NeighborConverged(mailbox.Self))
                 
         | NeighborConverged(actorRef) ->
             //remove actor from list of neighbours as converged
@@ -141,14 +152,12 @@ let GossipActor (mailbox: Actor<_>) =
         |_->()
              
         //ifgossipReceived
-        if gossipHeardOnce then            
-            //////or we could use simple while loop and add delay of one second
-            if neighborCount <> 0 then
-                let index: int = rand.Next()%neighborCount
-                let randomNeighbor: IActorRef = neighborList.[index]
-                //keep sending gossip to random nodes in neighbours list
-                gossipSystem.Scheduler.ScheduleTellOnce(TimeSpan.FromSeconds(1.0), randomNeighbor, Gossip, self)
-                
+        if gossipHeardOnce && neighborCount<> 0 then            
+            let index: int = rand.Next()%neighborCount
+            let randomNeighbor: IActorRef = neighborList.[index]
+            //keep sending gossip to random nodes in neighbours list
+            gossipSystem.Scheduler.ScheduleTellOnce(TimeSpan.FromSeconds(1.0), randomNeighbor, Gossip, mailbox.Self)
+
         
         return! loop()
     }
@@ -171,18 +180,22 @@ let PushSumActor (mailbox: Actor<_>) =
         let! message = mailbox.Receive()
         match message with
         | Initalize(allActors, topology) ->
-            printfn "Hello from gossip actor, initializing neighbors"
             //INITIALIZE NEIGHBOR LIST ACCORDING TO TOPOLOGY
-            neighborList <- getNeighbors mailbox.Self.Path.Name allActors topology
-            neighborList |> List.iter (fun item -> 
-                     printfn "%s" item.Path.Name)
-            //neighborList <- fst(tupleValues)
+            let actorName = mailbox.Self.Path.Name
+            neighborList <- getNeighbors actorName allActors topology            
             neighborCount <- neighborList.Length
             /////INITIALIZE SUM ACCORDING TO ACTOR NUMBER
+            sum <- ((actorName.Split '_').[1] |> int)
             ratio <- sum/weight
         | StartPushSum ->
             pushSumReceived <- true
             /////SEND SUM AND WEIGHT TO RANDOM NEIGHBOR
+            sum <- sum/2
+            weight <- weight/2
+            let index: int = rand.Next()%neighborCount
+            let randomNeighbor: IActorRef = neighborList.[index]
+            randomNeighbor <! PushSum(sum, weight)
+
 
         //PushSum
         |PushSum(newSum, newWeight) ->
@@ -193,8 +206,11 @@ let PushSumActor (mailbox: Actor<_>) =
             sum <- sum + newSum
             weight <- weight + newWeight
             //if |oldRatio - newRatio|<10**-10
-            diff <- ratio - (sum/weight) |> float |> abs
+            diff <- (ratio - (sum/weight) |> float |> abs)
             /////SEND SUM AND WEIGHT TO RANDOM NEIGHBOR
+            if neighborCount <> 0 then
+                let randomNeighbor: IActorRef = neighborList.[rand.Next()%neighborCount]
+                randomNeighbor <! PushSum(sum, weight)
             //compute new ratio
             ratio <- sum/weight
             if diff > delta then    
@@ -202,7 +218,6 @@ let PushSumActor (mailbox: Actor<_>) =
             else
                 lessthandelta <- (lessthandelta + 1)
             
-            //if lessthandelta=3 then  
             if lessthandelta = 3 then
                 //send Converged to parent
                 mailbox.Context.Parent <! Converged
@@ -220,7 +235,7 @@ let PushSumActor (mailbox: Actor<_>) =
         |_->()
 
         //ifPushSumReceived            
-        if pushSumReceived then
+        if pushSumReceived && neighborCount<> 0 then
             //////or we could use simple while loop and add delay of one second
             let randomNeighbor: IActorRef = neighborList.[rand.Next()%neighborCount]
             //keep sending gossip to random nodes in neighbours list
@@ -241,6 +256,7 @@ let Supervisor (mailbox:Actor<_>) =
             //check topology
             match algo with
             | "Gossip" ->
+                printfn "Gossip algo detected"
                 let allActors = 
                     [1 .. nodes]
                     |> List.map(fun id -> spawn mailbox.Context (sprintf "Actor_%d" id) GossipActor)    
@@ -265,7 +281,7 @@ let Supervisor (mailbox:Actor<_>) =
         | Converged ->
             converged <- converged + 1
             if converged = nodes then
-                printfn "Time taken = %i\n" timer.ElapsedMilliseconds
+                printfn "Time taken to converge = %i ms\n" timer.ElapsedMilliseconds
                 mailbox.Context.Stop(mailbox.Self)
                 mailbox.Context.System.Terminate() |> ignore             
         return! loop()
