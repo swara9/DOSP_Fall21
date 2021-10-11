@@ -35,6 +35,7 @@ let getNeighbors (actorName:string) (allActors:list<IActorRef>) (topology:string
 
     //match topolgy and return neighbors IActorRef[] accordingly
     let mutable neighborList = []
+    let mutable neighborIndices = []
     //change this according to topology
     //let numberOfNeighbours = 10
     let totalNodes = allActors.Length
@@ -51,18 +52,24 @@ let getNeighbors (actorName:string) (allActors:list<IActorRef>) (topology:string
 
         if currentPlane > 0 then
             neighborList <- neighborList @ [allActors.[n - planeNodeCount]]
+            neighborIndices <- neighborIndices @ [n - planeNodeCount]
         if currentPlane < gridLength - 1 then
             neighborList <- neighborList @ [allActors.[n + planeNodeCount]]
+            neighborIndices <- neighborIndices @ [n - planeNodeCount]
 
         if currentRow > 0 then
             neighborList <- neighborList @ [allActors.[n - gridLength]]
+            neighborIndices <- neighborIndices @ [n - gridLength]
         if currentRow < gridLength - 1 then
             neighborList <- neighborList @ [allActors.[n + gridLength]]
+            neighborIndices <- neighborIndices @ [n + gridLength]
 
         if currentColumn > 0 then
             neighborList <- neighborList @ [allActors.[n - 1]]
+            neighborIndices <- neighborIndices @ [n - 1]
         if currentColumn < gridLength - 1 then
             neighborList <- neighborList @ [allActors.[n + 1]]
+            neighborIndices <- neighborIndices @ [n + 1]
 
     
 
@@ -85,9 +92,9 @@ let getNeighbors (actorName:string) (allActors:list<IActorRef>) (topology:string
 
     |"imp3d" ->
         getThreeDNeighbors currentNode
-        let mutable randomNode = Random().Next(0, totalNodes)
-        while randomNode = currentNode do
-            randomNode <- Random().Next(0, totalNodes)
+        let mutable randomNode = Random().Next(0, totalNodes-1)
+        while (randomNode = currentNode || (List.contains randomNode neighborIndices)) do
+            randomNode <- Random().Next(0, totalNodes-1)
         neighborList <- neighborList @ [allActors.[randomNode]]
 
     |_->()
