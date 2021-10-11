@@ -148,6 +148,7 @@ let GossipActor (mailbox: Actor<_>) =
                 let randomNeighbor: IActorRef = neighborList.[index]
                 //keep sending gossip to random nodes in neighbours list
                 gossipSystem.Scheduler.ScheduleTellOnce(TimeSpan.FromSeconds(1.0), randomNeighbor, Gossip, self)
+                
         
         return! loop()
     }
