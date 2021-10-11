@@ -4,16 +4,6 @@
 open System
 open Akka.Actor
 open Akka.FSharp
-// open Akka.configuration
-
-// let configuration = 
-//     ConfigurationFactory.ParseString(
-//         @"akka {            
-//             stdout-loglevel : DEBUG
-//             loglevel : ERROR
-//             log-dead-letters = 0
-//             log-dead-letters-during-shutdown = off
-//         }")
 
 type SupervisorMsg = 
     | Start
@@ -92,10 +82,11 @@ let getNeighbors (actorName:string) (allActors:list<IActorRef>) (topology:string
 
     |"imp3d" ->
         getThreeDNeighbors currentNode
-        let mutable randomNode = Random().Next(0, totalNodes-1)
-        while (randomNode = currentNode || (List.contains randomNode neighborIndices)) do
-            randomNode <- Random().Next(0, totalNodes-1)
-        neighborList <- neighborList @ [allActors.[randomNode]]
+        let rand = new Random()
+        let mutable index = rand.Next(totalNodes-1); 
+        while (index = currentNode || (List.contains index neighborIndices)) do
+            index <- rand.Next(totalNodes-1)
+        neighborList <- allActors.[index]:: neighborList
 
     |_->()
 
@@ -113,9 +104,8 @@ let topology = fsi.CommandLineArgs.[2]
 let algo = fsi.CommandLineArgs.[3]
 if topology = "3D" || topology = "Imp3D" then
     nodes <- roundOffNodes nodes
-printfn "%O" nodes
-let rand = Random(nodes)
-//Make topology
+printfn "Beginning Algorithm for %s topology, %s protocol for %O nodes" topology algo nodes
+let rand = new Random()
 
 //Gossip Actors
 let GossipActor (mailbox: Actor<_>) =
@@ -137,13 +127,12 @@ let GossipActor (mailbox: Actor<_>) =
             if gossipHeardOnce = false then
                 gossipHeardOnce <- true
             // select random neighbor and sed gossip
-            if neighborCount <> 0 then
-                let index: int = rand.Next()%neighborCount
+            if neighborCount > 0 then
+                let index: int = rand.Next(neighborCount)
                 let randomNeighbor: IActorRef = neighborList.[index]
                 randomNeighbor <! Gossip
             //increment numberGossipReceived
             timesGossipHeard <- timesGossipHeard + 1
-            printfn "I heard Gossip %i times" timesGossipHeard 
 
             if timesGossipHeard = 10 then  
                 //send Converged to parent
@@ -159,8 +148,8 @@ let GossipActor (mailbox: Actor<_>) =
         |_->()
              
         //ifgossipReceived
-        if gossipHeardOnce && neighborCount<> 0 then            
-            let index: int = rand.Next()%neighborCount
+        if gossipHeardOnce && neighborCount> 0 then            
+            let index: int = rand.Next(neighborCount)
             let randomNeighbor: IActorRef = neighborList.[index]
             //keep sending gossip to random nodes in neighbours list
             gossipSystem.Scheduler.ScheduleTellOnce(TimeSpan.FromSeconds(1.0), randomNeighbor, Gossip, mailbox.Self)
@@ -196,12 +185,11 @@ let PushSumActor (mailbox: Actor<_>) =
             ratio <- sum/weight
         | StartPushSum ->
             pushSumReceived <- true
-            /////SEND SUM AND WEIGHT TO RANDOM NEIGHBOR
-            sum <- sum/2
-            weight <- weight/2
-            let index: int = rand.Next()%neighborCount
-            let randomNeighbor: IActorRef = neighborList.[index]
-            randomNeighbor <! PushSum(sum, weight)
+
+            if neighborCount > 0 then
+                let index = rand.Next(neighborCount)
+                let randomNeighbor: IActorRef = neighborList.[index]
+                randomNeighbor <! PushSum(sum, weight)
 
 
         //PushSum
@@ -215,8 +203,8 @@ let PushSumActor (mailbox: Actor<_>) =
             //if |oldRatio - newRatio|<10**-10
             diff <- (ratio - (sum/weight) |> float |> abs)
             /////SEND SUM AND WEIGHT TO RANDOM NEIGHBOR
-            if neighborCount <> 0 then
-                let randomNeighbor: IActorRef = neighborList.[rand.Next()%neighborCount]
+            if neighborCount > 0 then
+                let randomNeighbor: IActorRef = neighborList.[rand.Next(neighborCount)]
                 randomNeighbor <! PushSum(sum, weight)
             //compute new ratio
             ratio <- sum/weight
@@ -242,9 +230,9 @@ let PushSumActor (mailbox: Actor<_>) =
         |_->()
 
         //ifPushSumReceived            
-        if pushSumReceived && neighborCount<> 0 then
+        if pushSumReceived && neighborCount> 0 then
             //////or we could use simple while loop and add delay of one second
-            let randomNeighbor: IActorRef = neighborList.[rand.Next()%neighborCount]
+            let randomNeighbor: IActorRef = neighborList.[rand.Next(neighborCount)]
             //keep sending gossip to random nodes in neighbours list
             gossipSystem.Scheduler.ScheduleTellOnce(TimeSpan.FromSeconds(1.0), randomNeighbor, PushSum(sum, weight), mailbox.Self)
         return! loop()
@@ -263,7 +251,6 @@ let Supervisor (mailbox:Actor<_>) =
             //check topology
             match algo with
             | "Gossip" ->
-                printfn "Gossip algo detected"
                 let allActors = 
                     [1 .. nodes]
                     |> List.map(fun id -> spawn mailbox.Context (sprintf "Actor_%d" id) GossipActor)    
@@ -298,7 +285,6 @@ let Supervisor (mailbox:Actor<_>) =
 
 //Spawn supervisor and start
 let supervisor = spawn gossipSystem "supervisor" Supervisor
-printfn "Spawning Supervisor"
 supervisor <! Start
 gossipSystem.WhenTerminated.Wait()
 
