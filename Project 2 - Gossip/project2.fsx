@@ -13,7 +13,7 @@ type ActorMsg =
     | Initalize of allActors: List<IActorRef> * topology: string
     | NeighborConverged of IActorRef
     | Gossip
-    | PushSum of sum:int * weight:int
+    | PushSum of sum:float * weight:float
     | StartPushSum
     
 
@@ -167,10 +167,10 @@ let PushSumActor (mailbox: Actor<_>) =
     let mutable pushSumReceived = false
     let mutable neighborCount = 0
     let mutable neighborList = []
-    let delta = 10.0 ** -10.0
-    let mutable sum = 0
-    let mutable weight = 1
-    let mutable ratio = 0
+    let delta:float = 10.0 ** -10.0
+    let mutable sum:float = 0.0
+    let mutable weight:float = 1.0
+    let mutable ratio:float = 0.0
     let mutable diff: float = 0.0
     let rec loop () = actor {
         let! message = mailbox.Receive()
@@ -181,7 +181,7 @@ let PushSumActor (mailbox: Actor<_>) =
             neighborList <- getNeighbors actorName allActors topology            
             neighborCount <- neighborList.Length
             /////INITIALIZE SUM ACCORDING TO ACTOR NUMBER
-            sum <- ((actorName.Split '_').[1] |> int)
+            sum <- ((actorName.Split '_').[1] |> float)
             ratio <- sum/weight
         | StartPushSum ->
             pushSumReceived <- true
@@ -259,7 +259,7 @@ let Supervisor (mailbox:Actor<_>) =
                 //Start Timer                
                 timer.Start()
                 //Send gossip to first node
-                let index = (rand.Next()) % nodes
+                let index = rand.Next(nodes)
                 allActors.[index] <! Gossip
             | "PushSum" ->
                 let allActors = 
@@ -270,7 +270,7 @@ let Supervisor (mailbox:Actor<_>) =
                 //Start Timer                
                 timer.Start()
                 //Send gossip to first node
-                allActors.[(rand.Next()) % nodes] <! StartPushSum
+                allActors.[rand.Next(nodes)] <! StartPushSum
             |_->()
         | Converged ->
             converged <- converged + 1
