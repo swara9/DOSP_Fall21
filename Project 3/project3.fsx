@@ -8,7 +8,7 @@ open System.Security.Cryptography
 open System.Collections.Generic
 
 let num_nodes = 10
-let num_message = 1
+let num_message = 10
 let hash_length = 160
 
 let chord_system = System.create "chord-system" (Configuration.load())
@@ -56,14 +56,17 @@ let ranStr n =
     String(Array.init n (fun _ -> chars.[r.Next sz]))
 
 let Chord_Node (mailbox : Actor<_>) =
-    let finger_table = Array2D.init hash_length 3 (fun _ _ -> "")
+    let mutable finger_table = Array2D.init hash_length 3 (fun _ _ -> "")
     let mutable predecessor = ""
     let selfName = mailbox.Context.Self.Path.Name
 
     let find_closest_preceeding_node id =
-        let mutable index = finger_table.Length
-        while id <= finger_table.[index, 1] do
-            index <- index - 1
+        let mutable index = finger_table.Length - 1
+        //REMOVE
+        printfn "node at last %i" index
+        
+        // while id <= finger_table.[index, 1] do
+        //     index <- index - 1
         finger_table.[index, 1]
      
     let basePath = "akka://chord-system/user/supervisor/"
@@ -96,20 +99,26 @@ let Chord_Node (mailbox : Actor<_>) =
                 finger_table.[i-1, 0] <- finger
                 finger_table.[i-1, 1] <- finger_val
                 finger_table.[i-1, 2] <- ""
-                //printfn "%O %O %O" finger finger_val path
+            printfn "finger table length %i" finger_table.Length
             mailbox.Sender() <! Init_Done
 
         | Begin_Simulation ->
             for i in 1 .. num_message do
                 //generate random message and hash it
-                let randommsg = ranStr(10) 
-                let hashedMsg = hash_string(randommsg, hash_type)    
+                let randomMsg = ranStr(10) 
+                let hashedMsg = hash_string(randomMsg, hash_type)  
+                //REMOVE
+                printfn "random key %s %s" randomMsg  hashedMsg
                 if hashedMsg > predecessor && hashedMsg <= selfName then
+                    //REMOVE
+                    printfn "Converging message"
                     mailbox.Context.Parent <! Received_Message(0)
                 else
                     let next_node = find_closest_preceeding_node(hashedMsg)
                     let mutable path = basePath+next_node 
-                    let actorRef = select path chord-system
+                    let actorRef = select path chord_system
+                    //REMOVE
+                    printfn "send key to next closest preceeding node %s %s" hashedMsg next_node
                     actorRef <! Route(hashedMsg, 0)
 
 
@@ -117,11 +126,15 @@ let Chord_Node (mailbox : Actor<_>) =
             let mutable num_hops = hop + 1
             //if message lesser than or equal to successor
             if message > predecessor && message <= selfName then
+                //REMOVE
+                printfn "Converging message"
                 mailbox.Context.Parent <! Received_Message(num_hops)
             else
                 let next_node = find_closest_preceeding_node(message)
                 let mutable path = basePath+next_node 
-                let actorRef = select path chord-system
+                let actorRef = select path chord_system
+                //REMOVE
+                printfn "send key to next closest preceeding node %s %s" message next_node
                 actorRef <! Route(message, num_hops)
         return! loop()
     }
@@ -130,8 +143,9 @@ let Chord_Node (mailbox : Actor<_>) =
 let Supervisor (mailbox : Actor<_>) =
     let mutable init_count = 0
     let mutable node_count = 0
+    let mutable chord_list = new List<IActorRef>()
+
     let total_requests = num_nodes * num_message
-    //REMOVE
     printfn "total requests = %i" total_requests
     let mutable average_hops = 0
     let mutable count = 0
@@ -142,25 +156,29 @@ let Supervisor (mailbox : Actor<_>) =
                                     node_count <- nodes
                                     let node_ids = [for i in 1 .. nodes do yield hash_string(prefix+string(i), hash_type)] |> List.sort
                                     let node_ids_int = [|for i in node_ids -> bigint.Parse(i, System.Globalization.NumberStyles.HexNumber)|]
-                                    let chord_list = new List<IActorRef>()
+                                    // chord_list = new List<IActorRef>()
                                     node_ids |> List.iter (fun node_id -> chord_list.Add (spawn mailbox.Context node_id Chord_Node))
-                                    for i in node_ids do
-                                        printfn "%O %O" i (bigint.Parse(i, System.Globalization.NumberStyles.HexNumber) % bigint (2.0**160.0))
+                                    // for i in node_ids do
+                                        // printfn "%O %O" i (bigint.Parse(i, System.Globalization.NumberStyles.HexNumber) % bigint (2.0**160.0))
                                     chord_list |> Seq.iteri (fun i chord_node -> 
                                          chord_node <! Initialize(node_ids_int, i))
                                     //chord_list.[9] <! Initialize(node_ids_int, 9)
 
         | Init_Done ->  init_count <- init_count + 1
-                        printfn "Initialized finger table"
                         if init_count = node_count then
                             printfn "Chord ring created"
+                            // chord_list |> Seq.iteri (fun i chord_node -> 
+                            //         chord_node <! Begin_Simulation)
+                            chord_list.[9] <! Begin_Simulation
+                            chord_list.[6] <! Begin_Simulation
+
 
         | Received_Message(hops) ->
             count <- count + 1
             average_hops <- average_hops + hops
 
             //REMOVE
-            printfn "request converged %i" count
+            printfn "request converged %i in %i hops" count hops
 
             if count = total_requests then
                 //calculate average
@@ -174,7 +192,7 @@ let Supervisor (mailbox : Actor<_>) =
 
 let supervisor = spawn chord_system "supervisor" Supervisor
 supervisor <! Start(num_nodes, num_message)
-gossipSystem.WhenTerminated.Wait()
+chord_system.WhenTerminated.Wait()
 // let sample = "chord_node_"
 //printfn "%s" (hash_string(sample, hash_type))
 // let chord_list = new List<string>()
