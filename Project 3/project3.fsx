@@ -56,7 +56,7 @@ let ranStr n =
     String(Array.init n (fun _ -> chars.[r.Next sz]))
 
 let Chord_Node (mailbox : Actor<_>) =
-    let mutable finger_table = Array2D.init hash_length 3 (fun _ _ -> "")
+    let mutable finger_table = Array2D.init hash_length 2 (fun _ _ -> "")
     let mutable predecessor = ""
     let selfName = mailbox.Context.Self.Path.Name
 
@@ -65,8 +65,8 @@ let Chord_Node (mailbox : Actor<_>) =
         //REMOVE
         printfn "node at last %i" index
         
-        // while id <= finger_table.[index, 1] do
-        //     index <- index - 1
+        while id <= finger_table.[index, 1] do
+            index <- index - 1
         finger_table.[index, 1]
      
     let basePath = "akka://chord-system/user/supervisor/"
