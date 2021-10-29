@@ -11,12 +11,20 @@ let hash_length = 160
 type Supervisor_Messge = 
     | Start of nodes:int * messages:int
     | Init_Done
+    | Received_Message of no_of_hops: int
 
 type Node_Message =
     | Initialize of chord_nodes: bigint [] * current_index: int
     | Begin_Simulation
+    | Route of message: bigint * hop: int
 
 let hash_type = "SHA1"
+
+let ranStr n = 
+    let r = Random()
+    let chars = Array.concat([[|'a' .. 'z'|];[|'A' .. 'Z'|];[|'0' .. '9'|]])
+    let sz = Array.length chars in
+    String(Array.init n (fun _ -> chars.[r.Next sz]))
 
 let hash_string (input: string, algo: string) =
     let hash_bytes = input 
@@ -27,6 +35,7 @@ let hash_string (input: string, algo: string) =
                         |> Seq.map (fun c -> c.ToString "x2")
                         |> Seq.reduce (+))
     hash_string
+
 
 let binary_search (arr:bigint []) key offset =
     let max_limit = arr.Length
@@ -46,6 +55,7 @@ let binary_search (arr:bigint []) key offset =
 let Chord_Node (mailbox : Actor<_>) =
     let finger_table = Array2D.init hash_length 3 (fun _ _ -> "")
     let mutable previous_node = ""
+    let mutable no_of_hops = 0
     let rec loop () = actor {
         let! message = mailbox.Receive()
         match message with
@@ -77,14 +87,27 @@ let Chord_Node (mailbox : Actor<_>) =
                 let mutable finger_val = next_largest.ToString("x2")
                 if finger_val.Length = 40 then
                     finger_val <- "0" + finger_val
+                let mutable path = "akka://chord-system/user/supervisor/"+finger_val
                 finger_table.[i-1, 0] <- finger
                 finger_table.[i-1, 1] <- finger_val
-                finger_table.[i-1, 2] <- ""
-                //printfn "%O %O" finger finger_val
+                finger_table.[i-1, 2] <- path
+                //printfn "%O %O %O" finger finger_val path
             mailbox.Sender() <! Init_Done
 
-        | _ -> ()
+        | Begin_Simulation ->
+            for i in 1 .. num_message do
+                //generate random message and hash it
+                let randomMsg = ranStr(10) 
+                let hashedMsg = hash_string(randomMsg, hash_type)
+                //check finger table and route to successor <! Route(message, 0)
 
+        | Route(message, hop) ->
+            no_of_hops <- hop+1
+            //if message lesser than or equal to successor
+                //mailbox.Context.Parent <! Receieved(no_of_hops)
+            //else
+                //find closest preceding node 
+                //route to that node
         return! loop()
     }
     loop()
@@ -92,6 +115,9 @@ let Chord_Node (mailbox : Actor<_>) =
 let Supervisor (mailbox : Actor<_>) =
     let mutable init_count = 0
     let mutable node_count = 0
+    let total_requests = num_nodes * num_message
+    let mutable average_hops = 0
+    let mutable count = 0
     let rec loop () = actor {
         let! message = mailbox.Receive()
         match message with
@@ -104,11 +130,22 @@ let Supervisor (mailbox : Actor<_>) =
                                     for i in node_ids do
                                         printfn "%O %O" i (bigint.Parse(i, System.Globalization.NumberStyles.HexNumber) % bigint (2.0**160.0))
                                     chord_list |> Seq.iteri (fun i chord_node -> 
-                                        chord_node <! Initialize(node_ids_int, i))
+                                         chord_node <! Initialize(node_ids_int, i))
                                     //chord_list.[9] <! Initialize(node_ids_int, 9)
 
         | Init_Done ->  init_count <- init_count + 1
+                        printfn "Initialized finger table"
                         if init_count = node_count then
+                            printfn "Chord ring created"
+
+        | Received_Message(hops) ->
+            count <- count + 1
+            average_hops <- average_hops + hops
+            if count = total_requests then
+                //calculate average
+                average_hops <- average_hops / total_requests
+                printfn "Average hops for %i nodes and %i requests per node = %i" num_nodes num_message average_hops
+                mailbox.Context.System.Terminate() |> ignore             
 
         return! loop()
     }
