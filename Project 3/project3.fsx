@@ -91,24 +91,17 @@ let Chord_Node (mailbox : Actor<_>) =
     //             index <- (index - 1)
     //         finger_table.[index, 1]
 
-    let find_next_node id = 
-        let mutable index = hash_length-1
-        while id < finger_table.[index, 1] && index > -1 do
-            index <- (index-1)
-            printfn "table index %i" index
-        
-        finger_table.[hash_length-1, 1]
-
+    
     let find_closest_preceeding_node id =
         let mutable index = hash_length-1
         //if we have to crossover
-        if id < selfName then
-            if finger_table.[index, 1] > selfName then 
-                finger_table.[index, 1]
-            else
-                find_next_node id
+        if id < selfName && finger_table.[index, 1] > selfName then
+            finger_table.[index, 1]
         else
-            find_next_node id
+            while id < finger_table.[index, 1] && index > 0 do
+                index <- (index-1)
+                // printfn "table index %i" index
+            finger_table.[index, 1]
 
                 
     let basePath = "akka://chord-system/user/supervisor/"
@@ -175,8 +168,6 @@ let Chord_Node (mailbox : Actor<_>) =
             let mutable num_hops = hop + 1
             //if message lesser than or equal to successor
             if (selfName < predecessor && (hashedMsg > predecessor || hashedMsg <= selfName))  || (hashedMsg > predecessor && hashedMsg <= selfName) then
-                //REMOVE
-                // printfn "Converging message"
                 mailbox.Context.Parent <! Received_Message(num_hops)
             else
                 //if successor has key
@@ -225,9 +216,6 @@ let Supervisor (mailbox : Actor<_>) =
                             printfn "Chord ring created"
                             chord_list |> Seq.iteri (fun i chord_node -> 
                                     chord_node <! Begin_Simulation)
-                            // chord_list.[9] <! Begin_Simulation
-                            // chord_list.[6] <! Begin_Simulation
-
 
         | Received_Message(hops) ->
             count <- count + 1
