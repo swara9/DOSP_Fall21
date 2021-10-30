@@ -8,7 +8,7 @@ open System.Security.Cryptography
 open System.Collections.Generic
 
 let num_nodes = 10
-let num_message = 1
+let num_message = 10
 let hash_length = 160
 
 let chord_system = System.create "chord-system" (Configuration.load())
@@ -85,6 +85,11 @@ let Chord_Node (mailbox : Actor<_>) =
                     index <- (index-1)
                 finger_table.[index, 1]
         else
+            //it has crossed over which we don't want
+            if finger_table.[index,1] < selfName then
+                while finger_table.[index-1, 1] <= finger_table.[index, 1] do
+                    index <- (index-1)               
+                index <- (index-1)
             while id < finger_table.[index, 1] do
                index <- (index-1)
             finger_table.[index, 1]
@@ -155,7 +160,7 @@ let Chord_Node (mailbox : Actor<_>) =
         | Route(hashedMsg, hop) ->
             let mutable num_hops = hop + 1
             //REMOVE
-            printfn "received %s at %s" hashedMsg selfName
+            // printfn "received %s at %s" hashedMsg selfName
             //if message lesser than or equal to successor
             if (selfName < predecessor && (hashedMsg > predecessor || hashedMsg <= selfName))  || (hashedMsg > predecessor && hashedMsg <= selfName) then
                 //REMOVE
