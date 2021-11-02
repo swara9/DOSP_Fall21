@@ -8,7 +8,7 @@ open System.Security.Cryptography
 open System.Collections.Generic
 
 let num_nodes = 10
-let num_message = 10
+let num_message = 1
 let hash_length = 160
 let chord_system = System.create "chord-system" (Configuration.load())
 let maxNode:bigint = bigint(2.0 ** 160.0)
@@ -18,11 +18,12 @@ type Supervisor_Messge =
     | Start of nodes:int * messages:int
     | CreateOtherNodes
     | Received_Message of no_of_hops: int
+    | NodeCreated
 
 type Node_Message =
-    // | Begin_Simulation
+    | Begin_Simulation
     // | Route of message: string * hop: int
-    | FindSuccessor of id: string * askerNode: string * purpose: int
+    | FindSuccessor of id: string * askerNode: string * purpose: int * num_hops : int
     | ChangeSuccessor of successor: string
     | Create
     | Join of node: string
@@ -74,11 +75,13 @@ let chordNode (mailbox : Actor<_>) =
    
     let find_closest_preceeding_node id =
         let mutable index = hash_length-1
-        while finger_table.[index] = "" do
+        // if all fingers are not yet initialized
+        while finger_table.[index] = "" do 
             index <- (index-1)
+            printfn "First case %i" index           
 
         //if we have to crossover
-        if id < currNode then
+        if id <= currNode then
             if finger_table.[index] > currNode then
                 printfn "%s --- index %i case 0" currNode index              
                 finger_table.[index]
@@ -92,8 +95,8 @@ let chordNode (mailbox : Actor<_>) =
                 finger_table.[index]
         else
             //it has crossed over which we don't want
-            if finger_table.[index] < currNode || finger_table.[index] = "" then                
-                while finger_table.[index-1] <= finger_table.[index] || index >1 do
+            if finger_table.[index] < currNode then                
+                while finger_table.[index-1] <= finger_table.[index] || index > 1 do
                     index <- (index-1)
                     printfn "index %i case 3" index              
                 index <- (index-1)
@@ -109,42 +112,51 @@ let chordNode (mailbox : Actor<_>) =
     let rec loop () = actor {
         let! message = mailbox.Receive()
         match message with
-        | FindSuccessor(id, asker, purpose) ->             
+        | FindSuccessor(id, asker, purpose, hop_num) ->             
             let successor = finger_table.[0]
+            let mutable num_hops = 0
+            if purpose = -2 then
+                num_hops <- (hop_num+1)
+            // initially when there is only one node and successor is itself
             if currNode = successor && purpose = -1 then
                 let actorRef = getActorRef asker
                 actorRef <! ChangeSuccessor(successor)
-                mailbox.Self <! ChangeSuccessor(asker)
+                mailbox.Self <! ChangeSuccessor(asker)                
             else 
+                //if successor found
                 if (id > currNode && id <= successor) || (successor< currNode && (id> currNode || id<= successor)) then
                     let actorRef = getActorRef asker
                     //means join
                     if purpose = -1 then
-                        noActorsJoined <- noActorsJoined+1
-                        actorRef <! ChangeSuccessor(successor)                        
-                    //means update finger table
+                        actorRef <! ChangeSuccessor(successor) 
+                    //for routing
+                    else if purpose = -2 then     
+                        mailbox.Context.Parent <! Received_Message(num_hops)               
+                    //means update finger table here purpose means index of finger table to update
                     else 
                         actorRef <! UpdateFinger(id, purpose)                 
                 else
                     let cpn = find_closest_preceeding_node id
                     let actorRef = getActorRef cpn
-                    actorRef <! FindSuccessor(id, asker, purpose)
+                    actorRef <! FindSuccessor(id, asker, purpose, num_hops)
 
         | ChangeSuccessor(successor) ->
+            if finger_table.[0] = "" then
+                mailbox.Context.Parent <! NodeCreated
             finger_table.[0] <- successor
 
         | Create ->
             printfn "Create called"
-            noActorsJoined <- 1
             predecessor <- ""
             finger_table.[0] <- currNode
+            mailbox.Sender() <! NodeCreated
             mailbox.Sender() <! CreateOtherNodes
 
         | Join(existingNode) ->
             printfn "Join Called"
             predecessor <- ""
             let actorRef = getActorRef(existingNode)
-            actorRef <! FindSuccessor(currNode, currNode, -1)
+            actorRef <! FindSuccessor(currNode, currNode, -1, 0)
 
         | TellYourPred ->
             // printfn "Calling stabilize"
@@ -183,39 +195,19 @@ let chordNode (mailbox : Actor<_>) =
             let mutable finger_val = finger_int_val.ToString("X")
             if finger_val.Length < 41 then
                 finger_val <- (String.replicate (41-finger_val.Length) "0") + finger_val
-            mailbox.Self <! FindSuccessor(finger_val, currNode, next)
+            mailbox.Self <! FindSuccessor(finger_val, currNode, next, 0)
         
         | UpdateFinger(id, index) ->
-            // printfn "Update finger of %i as %s" index id
+            printfn "Update finger of %s @ %i as %s" currNode index id
             finger_table.[index] <- id
 
-        // | Begin_Simulation ->
-        //     for i in 1 .. num_message do
-        //         //generate random message and hash it
-        //         let randomMsg = ranStr(50) 
-        //         let hashedMsg = hash_string(randomMsg, hash_type)  
-        //         //REMOVE
-        //         //if key already in successor
-        //         // if (currNode < predecessor && (hashedMsg > predecessor || hashedMsg <= currNode)) || (hashedMsg > predecessor && hashedMsg <= currNode) then
-        //             //REMOVE
-        //             // printfn "Converging message"
-        //             // mailbox.Context.Parent <! Received_Message(0)
-        //         // else
-        //             //if successor has key
-        //         let successor = finger_table.[0]
-        //         if (hashedMsg > currNode && hashedMsg <= successor) || (successor< currNode && (hashedMsg> currNode || hashedMsg<= successor)) then
-        //             let path = basePath+successor
-        //             let actorRef = select path chord_system
-        //             mailbox.Context.Parent <! Received_Message(1)
-        //             //REMOVE 
-        //             // printfn "routing %s to %s" hashedMsg path
-        //             // actorRef <! Route(hashedMsg, 0) 
-        //         else
-        //             let next_node = find_closest_preceeding_node(hashedMsg)
-        //             let mutable path = basePath+next_node 
-        //             let actorRef = select path chord_system
-                    
-        //             actorRef <! Route(hashedMsg, 0)
+        | Begin_Simulation ->
+            printfn "I shall begin"
+            // for i in 1 .. num_message do
+            //generate random message and hash it
+            let randomMsg = ranStr(50) 
+            let hashedMsg = hash_string(randomMsg)  
+            mailbox.Self <! FindSuccessor(hashedMsg, currNode, -2, 0)
 
 
         // | Route(hashedMsg, hop) ->
@@ -250,6 +242,8 @@ let Supervisor (mailbox : Actor<_>) =
     let mutable node_count = 0
     // let mutable chord_list = new List<IActorRef>()
     let mutable firstNode = ""
+    let chord_ring = Array.create num_nodes mailbox.Context.Self
+    let mutable chord_index = 0
 
     let total_requests = num_nodes * num_message
     printfn "total requests = %i" total_requests
@@ -264,14 +258,18 @@ let Supervisor (mailbox : Actor<_>) =
             printfn "First node %s" hashedValue
             firstNode <- hashedValue
             let actorRef = spawn mailbox.Context hashedValue chordNode
+            chord_ring.[chord_index] <- actorRef
+            chord_index<- (chord_index+1)
             actorRef <! Create
             
 
         | CreateOtherNodes ->
-            for i in 1 .. num_nodes-1 do
+            // for i in 1 .. num_nodes-1 do
                 let nodeName = ranStr 10
                 let hashedValue = hash_string nodeName
                 let actorRef = spawn mailbox.Context hashedValue chordNode
+                chord_ring.[chord_index] <- actorRef
+                chord_index<- (chord_index+1)
                 actorRef <! Join(firstNode)
       
         | Received_Message(hops) ->
@@ -287,6 +285,11 @@ let Supervisor (mailbox : Actor<_>) =
                 printfn "Average hops for %i nodes and %i requests per node = %i" num_nodes num_message average_hops
                 mailbox.Context.System.Terminate() |> ignore             
 
+        | NodeCreated ->
+            noActorsJoined <- noActorsJoined + 1
+            if noActorsJoined = num_nodes then
+                for i in 0 .. (num_nodes-1) do
+                    chord_ring.[i] <! Begin_Simulation
         return! loop()
     }
     loop()
