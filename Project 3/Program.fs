@@ -4,10 +4,11 @@ open Akka.FSharp
 open System.Security.Cryptography
 open System.Collections.Generic
 
-let num_nodes = 100
-let num_message = 5
+let num_nodes = 2000
+let num_message = 10
 let hash_length = 160
 let empty_string = ""
+let chord_size =  bigint (2.0**160.0)
 
 let chord_system = System.create "chord-system" (Configuration.load())
 
@@ -23,10 +24,10 @@ type Node_Message =
     | Create_Chord
     | Join_Chord of id: IActorRef
     | Begin_Simulation
-    | Stabilize
+    | Stabilize of string
     | Notify of string
     | Route of message: string * hops: int
-    | Fix_Fingers of int
+    | Fix_Fingers
     | Find_Successor of string * string * int
     | Update_Successor of string * int
     | Find_Succ_Pred
@@ -55,6 +56,7 @@ let Chord_Node (mailbox : Actor<_>) =
     let finger_table = Array.create hash_length empty_string
     let mutable predecessor = empty_string
     let mutable succ_pred = empty_string
+    let mutable next = 1 
     let chord_name = mailbox.Context.Self.Path.Name
     
     let find_closest_preceding_node id =
@@ -69,7 +71,10 @@ let Chord_Node (mailbox : Actor<_>) =
         else
             while finger_table.[index] >= id && finger_table.[index] <= chord_name do
                 index <- (index - 1)
-        finger_table.[index]
+        if index = -1 then
+            chord_name
+        else
+            finger_table.[index]
                 
     let basePath = "akka://chord-system/user/supervisor/"
     let supervisor_ref = select basePath chord_system
@@ -100,42 +105,39 @@ let Chord_Node (mailbox : Actor<_>) =
                                                                     let actorRef = select path chord_system 
                                                                     actorRef <! Find_Successor(source_node, id, index)
 
-        | Stabilize                                 ->      if (chord_name < succ_pred && succ_pred < finger_table.[0]) then
-                                                                finger_table.[0] <- succ_pred
+        | Stabilize(succ_pred)                      ->      if succ_pred <> "" then
+                                                                if (finger_table.[0] < chord_name && (succ_pred < finger_table.[0] || succ_pred > chord_name)) 
+                                                                        || (succ_pred > chord_name && succ_pred < finger_table.[0]) then
+                                                                    finger_table.[0] <- succ_pred
         
                                                             let actor_ref = select (basePath + finger_table.[0]) chord_system
                                                             actor_ref <! Notify(chord_name)
                                                             
-        | Notify(id)                                ->      if (predecessor = "" || (predecessor < id && id < chord_name)) then
-                                                                predecessor <- id
+        | Notify(pred)                              ->      if (predecessor = "" || (pred > chord_name && (pred > predecessor || pred < chord_name)) 
+                                                                    || (predecessor < pred && pred < chord_name)) then
+                                                                predecessor <- pred
 
 
-        | Fix_Fingers(next)                          ->     let next = next + 1
-                                                            if next <= 159 then
-                                                                let path = basePath + chord_name
-                                                                let actor_ref = select path chord_system
-                                                                let value = bigint.Parse(chord_name, System.Globalization.NumberStyles.HexNumber) + ((2.0** ((next-1)|>float)) |> bigint)
-                                                                let mutable value_str = value.ToString("x2")
-                                                                if value_str.Length < 41 then
-                                                                    value_str <- (String.replicate (41-value_str.Length) "0") + value_str
-                                                                actor_ref <! Find_Successor(chord_name, value_str, next)
+        | Fix_Fingers                               ->      next <- next + 1
+                                                            if next > 160 then
+                                                                next <- 0
+                                                            let path = basePath + chord_name
+                                                            let actor_ref = select path chord_system
+                                                            let value = (bigint.Parse(chord_name, System.Globalization.NumberStyles.HexNumber) + ((2.0** ((next-1)|>float)) |> bigint)) % chord_size
+                                                            let mutable value_str = value.ToString("x2")
+                                                            if value_str.Length < 41 then
+                                                                value_str <- (String.replicate (41-value_str.Length) "0") + value_str
+                                                            actor_ref <! Find_Successor(chord_name, value_str, next)
 
         | Find_Succ_Pred                            ->      let actor_ref = select (basePath + finger_table.[0]) chord_system
                                                             actor_ref <! Send_Pred
 
-        | Send_Pred                                 ->      mailbox.Sender() <! Update_Succ_Pred(predecessor)
-
-        | Update_Succ_Pred(predecessor_Id)          ->      succ_pred <- predecessor_Id
-                                                            let nodeRef = select (basePath + chord_name) chord_system
-                                                            nodeRef <! Stabilize
+        | Send_Pred                                 ->      mailbox.Sender() <! Stabilize(predecessor)
                                             
 
         | Update_Successor(successor, index)        ->      finger_table.[index] <- successor
                                                             if index = 0 then
                                                                 supervisor_ref <! Node_Inserted
-                                                            else 
-                                                                let nodeRef = select (basePath + chord_name) chord_system
-                                                                nodeRef <! Fix_Fingers(index)
 
         | Begin_Simulation                          ->      for i in 1 .. num_message do
                                                             //generate random message and hash it
@@ -198,7 +200,7 @@ let Supervisor (mailbox : Actor<_>) =
                                                 mailbox.Self <! Node_Inserted
                                                 
         | Node_Inserted                 ->      if node_pointer < node_count - 1 then
-                                                    chord_system.Scheduler.ScheduleTellRepeatedly(TimeSpan.FromMilliseconds(1000.0), TimeSpan.FromMilliseconds(500.0), chord_nodes.[node_pointer], Fix_Fingers(0))
+                                                    chord_system.Scheduler.ScheduleTellRepeatedly(TimeSpan.FromMilliseconds(1000.0), TimeSpan.FromMilliseconds(500.0), chord_nodes.[node_pointer], Fix_Fingers)
                                                     chord_system.Scheduler.ScheduleTellRepeatedly(TimeSpan.FromMilliseconds(1000.0), TimeSpan.FromMilliseconds(500.0), chord_nodes.[node_pointer], Find_Succ_Pred)
                                                     node_pointer <- node_pointer + 1
                                                     mailbox.Self <! Insert_New_Node(node_pointer)
@@ -208,7 +210,7 @@ let Supervisor (mailbox : Actor<_>) =
         | Insert_New_Node(id)           ->      chord_nodes.[id] <! Join_Chord(chord_id)
 
         | Init_Done                     ->      printfn "Chord ring created"
-                                                System.Threading.Thread.Sleep(60000)
+                                                //System.Threading.Thread.Sleep(600000)
                                                 chord_nodes |> Seq.iter (fun chord_node -> 
                                                         chord_node <! Begin_Simulation)
 
