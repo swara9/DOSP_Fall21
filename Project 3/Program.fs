@@ -3,7 +3,7 @@ open Akka.Actor
 open Akka.FSharp
 open System.Security.Cryptography
 
-let num_nodes = 10
+let num_nodes = 1000
 let num_message = 5
 let hash_length = 160
 let empty_string = ""
@@ -64,10 +64,10 @@ let Chord_Node (mailbox : Actor<_>) =
             index <- index - 1
         //if we have to crossover
         if chord_name < id then
-            while (finger_table.[index] <= chord_name || finger_table.[index] >= id) do
+            while index >= 0 && (finger_table.[index] <= chord_name || finger_table.[index] >= id) do
                 index <- (index - 1)
         else
-            while finger_table.[index] >= id && finger_table.[index] <= chord_name do
+            while index >= 0 && (finger_table.[index] >= id && finger_table.[index] <= chord_name) do
                 index <- (index - 1)
         if index = -1 then
             chord_name
@@ -112,7 +112,7 @@ let Chord_Node (mailbox : Actor<_>) =
                                                             let actor_ref = select (basePath + finger_table.[0]) chord_system
                                                             actor_ref <! Notify(chord_name)
                                                             
-        | Notify(pred)                              ->      if predecessor = "" || ((pred > chord_name && (pred > predecessor || pred < chord_name)) 
+        | Notify(pred)                              ->      if predecessor = "" || ((predecessor > chord_name && (pred > predecessor || pred < chord_name)) 
                                                                                                     || (predecessor < pred && pred < chord_name)) then
                                                                 predecessor <- pred
 
@@ -204,7 +204,7 @@ let Supervisor (mailbox : Actor<_>) =
         | Insert_New_Node(id)           ->      chord_nodes.[id] <! Join_Chord(chord_id)
 
         | Init_Done                     ->      printfn "Chord ring created"
-                                                //System.Threading.Thread.Sleep(600000)
+                                                System.Threading.Thread.Sleep(60000)
                                                 chord_nodes |> Seq.iter (fun chord_node -> 
                                                         chord_node <! Begin_Simulation)
 
