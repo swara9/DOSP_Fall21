@@ -2,10 +2,9 @@ open System
 open Akka.Actor
 open Akka.FSharp
 open System.Security.Cryptography
-open System.Collections.Generic
 
-let num_nodes = 2000
-let num_message = 10
+let num_nodes = 10
+let num_message = 5
 let hash_length = 160
 let empty_string = ""
 let chord_size =  bigint (2.0**160.0)
@@ -30,7 +29,7 @@ type Node_Message =
     | Fix_Fingers
     | Find_Successor of string * string * int
     | Update_Successor of string * int
-    | Find_Succ_Pred
+    | NextsPred
     | Send_Pred
     | Update_Succ_Pred of string
 
@@ -55,7 +54,6 @@ let hash_string (input: string, algo: string) =
 let Chord_Node (mailbox : Actor<_>) =
     let finger_table = Array.create hash_length empty_string
     let mutable predecessor = empty_string
-    let mutable succ_pred = empty_string
     let mutable next = 1 
     let chord_name = mailbox.Context.Self.Path.Name
     
@@ -83,26 +81,27 @@ let Chord_Node (mailbox : Actor<_>) =
         let! message = mailbox.Receive()
         match message with
         | Create_Chord                              ->       finger_table.[0] <- chord_name
+                                                             for i in 1 .. 160 do
+                                                                 mailbox.Self <! Fix_Fingers
                                                              supervisor_ref <! Chord_Created(mailbox.Self)
+                                                             chord_system.Scheduler.ScheduleTellRepeatedly(TimeSpan.FromMilliseconds(100.0), TimeSpan.FromMilliseconds(100.0), mailbox.Self, Fix_Fingers)
+                                                             chord_system.Scheduler.ScheduleTellRepeatedly(TimeSpan.FromMilliseconds(100.0), TimeSpan.FromMilliseconds(100.0), mailbox.Self, NextsPred)
 
         | Join_Chord(chord_node)                    ->       chord_node <! Find_Successor(chord_name, chord_name, 0)
 
-        | Find_Successor(source_node, id, index)    ->      let path = basePath + source_node
-                                                            let id_reference = select path chord_system
+        | Find_Successor(source_node, id, index)    ->      let origin_node = select (basePath + source_node) chord_system
 
-                                                            if chord_name = finger_table.[0] then
+                                                            if chord_name = finger_table.[0] && index = 0 then
                                                                 finger_table.[0] <- id
-                                                                id_reference <! Update_Successor(chord_name, index)
+                                                                origin_node <! Update_Successor(chord_name, index)
                                                             else
                                                                 let successor = finger_table.[0]
-                                                                let mutable path = empty_string
-                                                                if (id > chord_name && chord_name <= successor) ||   
-                                                                    (successor < chord_name && (id > chord_name || id <= successor)) then
-                                                                    id_reference <! Update_Successor(successor, index)
+                                                                if (successor < chord_name && (id > chord_name || id <= successor)) 
+                                                                                                    || (id > chord_name && chord_name <= successor) then
+                                                                    origin_node <! Update_Successor(successor, index)
                                                                 else
                                                                     let next_node = find_closest_preceding_node(id)
-                                                                    path <- basePath + next_node 
-                                                                    let actorRef = select path chord_system 
+                                                                    let actorRef = select (basePath + next_node) chord_system 
                                                                     actorRef <! Find_Successor(source_node, id, index)
 
         | Stabilize(succ_pred)                      ->      if succ_pred <> "" then
@@ -113,23 +112,21 @@ let Chord_Node (mailbox : Actor<_>) =
                                                             let actor_ref = select (basePath + finger_table.[0]) chord_system
                                                             actor_ref <! Notify(chord_name)
                                                             
-        | Notify(pred)                              ->      if (predecessor = "" || (pred > chord_name && (pred > predecessor || pred < chord_name)) 
-                                                                    || (predecessor < pred && pred < chord_name)) then
+        | Notify(pred)                              ->      if predecessor = "" || ((pred > chord_name && (pred > predecessor || pred < chord_name)) 
+                                                                                                    || (predecessor < pred && pred < chord_name)) then
                                                                 predecessor <- pred
 
 
         | Fix_Fingers                               ->      next <- next + 1
-                                                            if next > 160 then
-                                                                next <- 0
-                                                            let path = basePath + chord_name
-                                                            let actor_ref = select path chord_system
+                                                            if next >= hash_length then
+                                                                next <- 1
                                                             let value = (bigint.Parse(chord_name, System.Globalization.NumberStyles.HexNumber) + ((2.0** ((next-1)|>float)) |> bigint)) % chord_size
                                                             let mutable value_str = value.ToString("x2")
                                                             if value_str.Length < 41 then
                                                                 value_str <- (String.replicate (41-value_str.Length) "0") + value_str
-                                                            actor_ref <! Find_Successor(chord_name, value_str, next)
+                                                            mailbox.Self <! Find_Successor(chord_name, value_str, next)
 
-        | Find_Succ_Pred                            ->      let actor_ref = select (basePath + finger_table.[0]) chord_system
+        | NextsPred                                 ->      let actor_ref = select (basePath + finger_table.[0]) chord_system
                                                             actor_ref <! Send_Pred
 
         | Send_Pred                                 ->      mailbox.Sender() <! Stabilize(predecessor)
@@ -137,7 +134,11 @@ let Chord_Node (mailbox : Actor<_>) =
 
         | Update_Successor(successor, index)        ->      finger_table.[index] <- successor
                                                             if index = 0 then
+                                                                for i in 1 .. 160 do
+                                                                    mailbox.Self <! Fix_Fingers
                                                                 supervisor_ref <! Node_Inserted
+                                                                chord_system.Scheduler.ScheduleTellRepeatedly(TimeSpan.FromMilliseconds(100.0), TimeSpan.FromMilliseconds(100.0), mailbox.Self, Fix_Fingers)
+                                                                chord_system.Scheduler.ScheduleTellRepeatedly(TimeSpan.FromMilliseconds(100.0), TimeSpan.FromMilliseconds(100.0), mailbox.Self, NextsPred)
 
         | Begin_Simulation                          ->      for i in 1 .. num_message do
                                                             //generate random message and hash it
@@ -147,15 +148,9 @@ let Chord_Node (mailbox : Actor<_>) =
                                                             mailbox.Self <! Route(hashedMsg, -1)
 
         | Route(hashedMsg, hop)                     ->      let num_hops = hop + 1
-                                                            //REMOVE
-                                                            // printfn "received %s at %s" hashedMsg selfName
-                                                            //if message lesser than or equal to successor
-                                                            if (chord_name < predecessor && (hashedMsg > predecessor || hashedMsg <= chord_name))  || (hashedMsg > predecessor && hashedMsg <= chord_name) then
-                                                                //REMOVE
-                                                                // printfn "i AM THE SUCCESSOR %s FOR %s" selfName hashedMsg
+                                                            if predecessor <> empty_string && ((chord_name < predecessor && (hashedMsg > predecessor || hashedMsg <= chord_name))  || (hashedMsg > predecessor && hashedMsg <= chord_name)) then
                                                                 mailbox.Context.Parent <! Received_Message(num_hops)
                                                             else
-                                                                //if successor has key
                                                                 let successor = finger_table.[0]
                                                                 let mutable path = ""
                                                                 if (hashedMsg > chord_name && hashedMsg <= successor) 
@@ -181,7 +176,7 @@ let Supervisor (mailbox : Actor<_>) =
     let total_requests = num_nodes * num_message
     printfn "total requests = %i" total_requests
     let mutable node_pointer = 0
-    let mutable average_hops = 0
+    let mutable average_hops = 0.0
     let mutable count = 0
 
     let rec loop () = actor {
@@ -200,9 +195,8 @@ let Supervisor (mailbox : Actor<_>) =
                                                 mailbox.Self <! Node_Inserted
                                                 
         | Node_Inserted                 ->      if node_pointer < node_count - 1 then
-                                                    chord_system.Scheduler.ScheduleTellRepeatedly(TimeSpan.FromMilliseconds(1000.0), TimeSpan.FromMilliseconds(500.0), chord_nodes.[node_pointer], Fix_Fingers)
-                                                    chord_system.Scheduler.ScheduleTellRepeatedly(TimeSpan.FromMilliseconds(1000.0), TimeSpan.FromMilliseconds(500.0), chord_nodes.[node_pointer], Find_Succ_Pred)
                                                     node_pointer <- node_pointer + 1
+                                                    //System.Threading.Thread.Sleep(1000)
                                                     mailbox.Self <! Insert_New_Node(node_pointer)
                                                     if node_pointer = node_count - 1 then
                                                         mailbox.Self <! Init_Done
@@ -215,15 +209,15 @@ let Supervisor (mailbox : Actor<_>) =
                                                         chord_node <! Begin_Simulation)
 
         | Received_Message(hops)        ->      count <- count + 1
-                                                average_hops <- average_hops + hops
+                                                average_hops <- average_hops + double hops
 
                                                 // REMOVE
                                                 printfn "request converged %i in %i hops" count hops
 
                                                 if count = total_requests then
                                                     //calculate average
-                                                    average_hops <- average_hops / total_requests
-                                                    printfn "Average hops for %i nodes and %i requests per node = %i" num_nodes num_message average_hops
+                                                    average_hops <- average_hops / double total_requests
+                                                    printfn "Average hops for %O nodes and %O requests per node = %O" num_nodes num_message average_hops
                                                     mailbox.Context.System.Terminate() |> ignore
         
         return! loop()
