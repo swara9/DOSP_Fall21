@@ -31,7 +31,6 @@ type Node_Message =
     | Update_Successor of string * int
     | NextsPred
     | Send_Pred
-    | Update_Succ_Pred of string
 
 let hash_type = "SHA1"
 
@@ -142,10 +141,10 @@ let Chord_Node (mailbox : Actor<_>) =
 
         | Begin_Simulation                          ->      for i in 1 .. num_message do
                                                             //generate random message and hash it
-                                                            let randomMsg = create_random_string(50) 
-                                                            let hashedMsg = hash_string(randomMsg, hash_type)  
+                                                                let randomMsg = create_random_string(50) 
+                                                                let hashedMsg = hash_string(randomMsg, hash_type)  
 
-                                                            mailbox.Self <! Route(hashedMsg, -1)
+                                                                mailbox.Self <! Route(hashedMsg, -1)
 
         | Route(hashedMsg, hop)                     ->      let num_hops = hop + 1
                                                             if predecessor <> empty_string && ((chord_name < predecessor && (hashedMsg > predecessor || hashedMsg <= chord_name))  || (hashedMsg > predecessor && hashedMsg <= chord_name)) then
@@ -162,7 +161,7 @@ let Chord_Node (mailbox : Actor<_>) =
                     
                                                                 let actorRef = select path chord_system 
                                                                 actorRef <! Route(hashedMsg, num_hops)
-
+       
         return! loop()
     }
     loop()
@@ -196,7 +195,6 @@ let Supervisor (mailbox : Actor<_>) =
                                                 
         | Node_Inserted                 ->      if node_pointer < node_count - 1 then
                                                     node_pointer <- node_pointer + 1
-                                                    //System.Threading.Thread.Sleep(1000)
                                                     mailbox.Self <! Insert_New_Node(node_pointer)
                                                     if node_pointer = node_count - 1 then
                                                         mailbox.Self <! Init_Done
@@ -204,7 +202,7 @@ let Supervisor (mailbox : Actor<_>) =
         | Insert_New_Node(id)           ->      chord_nodes.[id] <! Join_Chord(chord_id)
 
         | Init_Done                     ->      printfn "Chord ring created"
-                                                System.Threading.Thread.Sleep(60000)
+                                                System.Threading.Thread.Sleep(5000)
                                                 chord_nodes |> Seq.iter (fun chord_node -> 
                                                         chord_node <! Begin_Simulation)
 

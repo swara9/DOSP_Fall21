@@ -151,6 +151,8 @@ let chordNode (mailbox : Actor<_>) =
             finger_table.[0] <- currNode
             mailbox.Sender() <! NodeCreated
             mailbox.Sender() <! CreateOtherNodes
+            chord_system.Scheduler.ScheduleTellOnce(TimeSpan.FromSeconds(1.0), mailbox.Self, TellYourPred, mailbox.Self)         
+            chord_system.Scheduler.ScheduleTellOnce(TimeSpan.FromSeconds(1.0), mailbox.Self, FixFingers, mailbox.Self)
 
         | Join(existingNode) ->
             printfn "Join Called"
@@ -200,6 +202,8 @@ let chordNode (mailbox : Actor<_>) =
         | UpdateFinger(id, index) ->
             printfn "Update finger of %s @ %i as %s" currNode index id
             finger_table.[index] <- id
+            chord_system.Scheduler.ScheduleTellOnce(TimeSpan.FromSeconds(1.0), mailbox.Self, TellYourPred, mailbox.Self)         
+            chord_system.Scheduler.ScheduleTellOnce(TimeSpan.FromSeconds(1.0), mailbox.Self, FixFingers, mailbox.Self)
 
         | Begin_Simulation ->
             printfn "I shall begin"
@@ -231,8 +235,7 @@ let chordNode (mailbox : Actor<_>) =
         //         // printfn "send key to next closest preceeding node %s %s" hashedMsg next_node
         //         actorRef <! Route(hashedMsg, num_hops)
 
-        chord_system.Scheduler.ScheduleTellOnce(TimeSpan.FromSeconds(1.0), mailbox.Self, TellYourPred, mailbox.Self)         
-        chord_system.Scheduler.ScheduleTellOnce(TimeSpan.FromSeconds(1.0), mailbox.Self, FixFingers, mailbox.Self)
+        
         return! loop()
     }
     loop()

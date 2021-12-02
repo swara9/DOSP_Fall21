@@ -7,8 +7,8 @@ open Akka.FSharp
 open System.Security.Cryptography
 open System.Collections.Generic
 
-let num_nodes = 1000
-let num_message = 5
+let num_nodes = 10
+let num_message = 10
 let hash_length = 160
 
 let chord_system = System.create "chord-system" (Configuration.load())
@@ -74,32 +74,25 @@ let Chord_Node (mailbox : Actor<_>) =
 
     let find_closest_preceeding_node id =
         let mutable index = hash_length-1
-        if selfName < id then
-            while (finger_table.[index, 1] <= selfName || finger_table.[index, 1] >= id) do
-                index <- (index - 1)
+        //if we have to crossover
+        if id < selfName then
+            if finger_table.[index, 1] > selfName then
+                finger_table.[index, 1]
+            else
+                while id < finger_table.[index, 1] && finger_table.[index-1, 1]<= finger_table.[index, 1] do 
+                    index <- (index-1)
+                if finger_table.[index-1, 1]> finger_table.[index, 1] && id< finger_table.[index,1] then
+                    index <- (index-1)
+                finger_table.[index, 1]
         else
-            while finger_table.[index, 1] >= id && finger_table.[index, 1] <= selfName do
-                index <- (index - 1)
-        finger_table.[index, 1]
-
-        //if id < selfName then
-        //    if finger_table.[index, 1] > selfName then
-        //        finger_table.[index, 1]
-        //    else
-        //        while id < finger_table.[index, 1] && finger_table.[index-1, 1]<= finger_table.[index, 1] do 
-        //            index <- (index-1)
-        //        if finger_table.[index-1, 1]> finger_table.[index, 1] && id< finger_table.[index,1] then
-        //            index <- (index-1)
-        //        finger_table.[index, 1]
-        //else
-        //    //it has crossed over which we don't want
-        //    if finger_table.[index,1] < selfName then
-        //        while finger_table.[index-1, 1] <= finger_table.[index, 1] do
-        //            index <- (index-1)               
-        //        index <- (index-1)
-        //    while id < finger_table.[index, 1] do
-        //       index <- (index-1)
-        //    finger_table.[index, 1]
+            //it has crossed over which we don't want
+            if finger_table.[index,1] < selfName then
+                while finger_table.[index-1, 1] <= finger_table.[index, 1] do
+                    index <- (index-1)               
+                index <- (index-1)
+            while id < finger_table.[index, 1] do
+               index <- (index-1)
+            finger_table.[index, 1]
                 
     let basePath = "akka://chord-system/user/supervisor/"
     
@@ -110,8 +103,8 @@ let Chord_Node (mailbox : Actor<_>) =
             let total_nodes = chord_nodes.Length
             let current_node_int = chord_nodes.[current_index]
             predecessor <- chord_nodes.[(total_nodes + current_index - 1) % total_nodes].ToString("x2")
-            if predecessor.Length < 41 then
-                predecessor <- (String.replicate (41-predecessor.Length) "0") + predecessor
+            if predecessor.Length = 40 then
+                predecessor <- "0" + predecessor
             let chord_size =  bigint (2.0**160.0)
             for i in 1 .. 160 do
                 let raw_value = current_node_int + bigint (2.0 ** float (i-1))
@@ -124,11 +117,11 @@ let Chord_Node (mailbox : Actor<_>) =
                     next_largest <- chord_nodes.[binary_search chord_nodes.[..current_index] finger_int 0]
                 
                 let mutable finger = finger_int.ToString("x2")
-                if finger.Length < 41 then
-                    finger <- (String.replicate (41-finger.Length) "0") + finger
+                if finger.Length = 40 then
+                    finger <- "0" + finger
                 let mutable finger_val = next_largest.ToString("x2")
-                if finger_val.Length < 41 then
-                    finger_val <- (String.replicate (41-finger_val.Length) "0") + finger_val
+                if finger_val.Length = 40 then
+                    finger_val <- "0" + finger_val
                 finger_table.[i-1, 0] <- finger
                 finger_table.[i-1, 1] <- finger_val
                
@@ -141,33 +134,31 @@ let Chord_Node (mailbox : Actor<_>) =
                 let hashedMsg = hash_string(randomMsg, hash_type)  
                 //REMOVE
                 //if key already in successor
-
-                mailbox.Self <! Route(hashedMsg, -1)
-                //if (selfName < predecessor && (hashedMsg > predecessor || hashedMsg <= selfName)) || (hashedMsg > predecessor && hashedMsg <= selfName) then
-                //    //REMOVE
-                //    // printfn "Converging message"
-                //    mailbox.Context.Parent <! Received_Message(0)
-                //else
-                //    //if successor has key
-                //    let successor = finger_table.[0,1]
-                //    if (hashedMsg > selfName && hashedMsg <= successor) || (successor< selfName && (hashedMsg> selfName || hashedMsg<= successor)) then
-                //        let path = basePath+successor
-                //        let actorRef = select path chord_system
-                //        //REMOVE 
-                //        // printfn "routing %s to %s" hashedMsg path
-                //        actorRef <! Route(hashedMsg, 0) 
-                //    else
-                //        let next_node = find_closest_preceeding_node(hashedMsg)
-                //        let mutable path = basePath+next_node 
-                //        let actorRef = select path chord_system
-                //        //REMOVE
-                //        // printfn "routing %s to %s" hashedMsg path
-                //        // printfn "send key to next closest preceeding node %s %s" hashedMsg next_node
-                //        actorRef <! Route(hashedMsg, 0)
+                if (selfName < predecessor && (hashedMsg > predecessor || hashedMsg <= selfName)) || (hashedMsg > predecessor && hashedMsg <= selfName) then
+                    //REMOVE
+                    // printfn "Converging message"
+                    mailbox.Context.Parent <! Received_Message(0)
+                else
+                    //if successor has key
+                    let successor = finger_table.[0,1]
+                    if (hashedMsg > selfName && hashedMsg <= successor) || (successor< selfName && (hashedMsg> selfName || hashedMsg<= successor)) then
+                        let path = basePath+successor
+                        let actorRef = select path chord_system
+                        //REMOVE 
+                        // printfn "routing %s to %s" hashedMsg path
+                        actorRef <! Route(hashedMsg, 0) 
+                    else
+                        let next_node = find_closest_preceeding_node(hashedMsg)
+                        let mutable path = basePath+next_node 
+                        let actorRef = select path chord_system
+                        //REMOVE
+                        // printfn "routing %s to %s" hashedMsg path
+                        // printfn "send key to next closest preceeding node %s %s" hashedMsg next_node
+                        actorRef <! Route(hashedMsg, 0)
 
 
         | Route(hashedMsg, hop) ->
-            let num_hops = hop + 1
+            let mutable num_hops = hop + 1
             //REMOVE
             // printfn "received %s at %s" hashedMsg selfName
             //if message lesser than or equal to successor
@@ -178,16 +169,20 @@ let Chord_Node (mailbox : Actor<_>) =
             else
                 //if successor has key
                 let successor = finger_table.[0, 1]
-                let mutable path = ""
-                if (hashedMsg > selfName && hashedMsg <= successor) 
-                    || (successor< selfName && (hashedMsg> selfName || hashedMsg<= successor)) then
-                    path <- basePath+successor
+                if (hashedMsg > selfName && hashedMsg <= successor) || (successor< selfName && (hashedMsg> selfName || hashedMsg<= successor)) then
+                    let path = basePath+successor
+                    let actorRef = select path chord_system 
+                    //REMOVE
+                    // printfn "routing %s to SUCCESSOR %s" hashedMsg path
+                    actorRef <! Route(hashedMsg, num_hops) 
                 else
                     let next_node = find_closest_preceeding_node(hashedMsg)
-                    path <- basePath+next_node 
-                    
-                let actorRef = select path chord_system 
-                actorRef <! Route(hashedMsg, num_hops) 
+                    let mutable path = basePath+next_node 
+                    let actorRef = select path chord_system
+                    //REMOVE
+                    // printfn "routing %s to %s" hashedMsg path
+                    // printfn "send key to next closest preceeding node %s %s" hashedMsg next_node
+                    actorRef <! Route(hashedMsg, num_hops)
                 
         return! loop()
     }
